@@ -1,0 +1,5 @@
+{
+  "name": "EduCheck & Classroom Sync",
+  "description": "ระบบเช็คชื่อด้วย QR Code และดึงข้อมูลจาก Google Classroom เชื่อมต่อ Google Sheets อัตโนมัติ",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,23 @@
+node_modules/
+node_modules_global/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+
+# ไฟล์ลับ - ห้ามอัปโหลดขึ้น GitHub
+.env
+.env.local
+service-account.json.json
+client_secret_*.json
+
+# ข้อมูลห้องเรียน (สำรองไว้ local)
+data/
+
+# Vercel
+.vercel
+
+# Patch scripts (optional)
+patch_*.cjs
+install.log
