@@ -3,18 +3,15 @@ import { google } from "googleapis";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
 // --- Database Logic ---
-const DATA_DIR = path.join(process.cwd(), "data");
+// Note: Vercel's filesystem is read-only except for /tmp
+const DATA_DIR = process.env.VERCEL ? "/tmp" : path.join(process.cwd(), "data");
 const CLASSROOMS_FILE = path.join(DATA_DIR, "classrooms.json");
 
 function ensureDataDir() {
