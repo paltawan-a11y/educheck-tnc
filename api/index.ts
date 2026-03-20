@@ -386,24 +386,27 @@ async function startServer() {
   app.get("/api/classrooms/:id/sync-sheets", async (req, res) => {
     try {
       const email = await getEmailFromToken(req.headers.authorization);
-      if (!email) {
-        return res.status(401).json({ error: "ไม่พบการยืนยัน" });
-      }
+      if (!email) return res.status(401).json({ error: "ไม่พบการยืนยัน" });
       
       const classroom = await getSupabaseClassroomById(req.params.id);
       if (!classroom) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
-      
-      if (classroom.ownerEmail !== email) {
-        return res.status(403).json({ error: "No permission" });
-      }
+      if (classroom.ownerEmail !== email) return res.status(403).json({ error: "No permission" });
       
       const spreadsheetId = classroom.spreadsheetId || process.env.GOOGLE_SHEET_ID;
       if (!spreadsheetId) return res.status(400).json({ error: "Missing Sheet ID" });
 
-      const authClient = new google.auth.GoogleAuth({
-        keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json"),
+      // Robust Auth: Env JSON String (for Vercel) or Local File (for Local)
+      let authOptions: any = {
         scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
-      });
+      };
+      
+      if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        authOptions.credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+      } else {
+        authOptions.keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json");
+      }
+
+      const authClient = new google.auth.GoogleAuth(authOptions);
       const sheets = google.sheets({ version: "v4", auth: authClient });
       
       const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
@@ -455,15 +458,23 @@ async function startServer() {
         return res.status(400).json({ error: "ไม่ได้ตั้งค่า Google Sheet ID สำหรับการบันทึก" });
       }
 
-      // Use Service Account auth
+      // Robust Auth: Env JSON String (for Vercel) or Local File (for Local)
       let authClient: any;
       try {
-        authClient = new google.auth.GoogleAuth({
-          keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json"),
-          scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-        });
-      } catch {
+        let authOptions: any = {
+           scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+        };
+        
+        if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+          authOptions.credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+        } else {
+          authOptions.keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json");
+        }
+        
+        authClient = new google.auth.GoogleAuth(authOptions);
+      } catch (e: any) {
         // Fallback local logging
+        console.warn("Auth initialization failed. Falling back to local logging.", e.message);
         const logFile = path.join(DATA_DIR, "attendance_log.json");
         let logs: any[] = [];
         if (fs.existsSync(logFile)) logs = JSON.parse(fs.readFileSync(logFile, "utf-8"));
@@ -629,11 +640,18 @@ async function startServer() {
         return res.status(400).json({ error: "ไม่ได้ตั้งค่า Google Sheet ID สำหรับการบันทึก" });
       }
 
-      const authClient = new google.auth.GoogleAuth({
-        keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json"),
+      // Robust Auth: Env JSON String (for Vercel) or Local File (for Local)
+      let authOptions: any = {
         scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-      });
+      };
+      
+      if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        authOptions.credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+      } else {
+        authOptions.keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json");
+      }
 
+      const authClient = new google.auth.GoogleAuth(authOptions);
       const sheets = google.sheets({ version: "v4", auth: authClient });
       
       const deptAbbr = classroom.department.includes("เทคโนโลยีสารสนเทศ") ? "ทส." : "ทธด.";

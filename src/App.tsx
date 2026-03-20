@@ -30,7 +30,8 @@ import {
   Settings,
   Table as TableIcon,
   FileSpreadsheet,
-  Loader
+  Loader,
+  Camera
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -258,96 +259,113 @@ const StudentModal = ({ student, onClose }: { student: StudentStat | null; onClo
 };
 
 const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const animRef = useRef<number>(0);
+  const [loading, setLoading] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const tick = useCallback(async () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
-      animRef.current = requestAnimationFrame(tick);
-      return;
-    }
-    canvas.height = video.videoHeight;
-    canvas.width = video.videoWidth;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    // @ts-ignore
-    const jsQR = (window as any).jsQR;
-    if (jsQR) {
-      const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: 'dontInvert',
-      });
-      if (code?.data) {
-        onScan(code.data);
-        return;
-      }
-    }
-    animRef.current = requestAnimationFrame(tick);
-  }, [onScan]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const start = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
-          audio: false,
-        });
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.setAttribute('playsinline', 'true');
-          await videoRef.current.play();
+  const processImage = async (file: File) => {
+    setLoading(true);
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        
+        // Optimize canvas size for scanning
+        const maxDim = 800;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) { h = (h / w) * maxDim; w = maxDim; }
+          else { w = (w / h) * maxDim; h = maxDim; }
+        }
+        
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(img, 0, 0, w, h);
+        
+        const imageData = ctx.getImageData(0, 0, w, h);
+        // @ts-ignore
+        const jsQR = (window as any).jsQR;
+        if (jsQR) {
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: 'dontInvert',
+          });
+          if (code?.data) {
+            onScan(code.data);
+          } else {
+            setError('ไม่พบ QR Code ในรูปภาพ กรุณาถ่ายใหม่ให้ชัดเจนขึ้น');
+          }
         }
         setLoading(false);
-        animRef.current = requestAnimationFrame(tick);
-      } catch (e: any) {
-        setError('ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตการใช้กล้องในการตั้งค่า');
-        setLoading(false);
-      }
+      };
+      img.src = e.target?.result as string;
+      setPreview(img.src);
     };
-    start();
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(animRef.current);
-      streamRef.current?.getTracks().forEach(t => t.stop());
-    };
-  }, [tick]);
+    reader.readAsDataURL(file);
+  };
 
-  if (error) return (
-    <div className="flex flex-col items-center justify-center p-6 text-center">
-      <div className="text-4xl mb-3">📷</div>
-      <p className="text-red-500 font-medium">{error}</p>
-      <p className="text-gray-500 text-sm mt-2">iOS: เปิด Safari → การตั้งค่า → กล้อง → อนุญาต</p>
-    </div>
-  );
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processImage(file);
+  };
 
   return (
-    <div className="relative w-full max-w-sm mx-auto">
-      {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-xl z-10">
-          <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
+    <div className="flex flex-col items-center">
+      <div className="w-full max-w-sm aspect-square bg-slate-900 rounded-3xl overflow-hidden relative flex items-center justify-center border-4 border-indigo-500/30 shadow-2xl mb-6">
+        {preview ? (
+          <img src={preview} alt="Preview" className="w-full h-full object-cover" />
+        ) : (
+          <div className="flex flex-col items-center text-slate-400 group">
+             <div className="w-20 h-20 rounded-full bg-slate-800 flex items-center justify-center mb-4 group-hover:bg-indigo-600/20 transition-colors">
+               <Camera className="w-10 h-10" />
+             </div>
+             <p className="text-sm font-bold opacity-60">กดปุ่มด้านล่างเพื่อถ่ายรูป QR Code</p>
+          </div>
+        )}
+        
+        {loading && (
+          <div className="absolute inset-0 bg-slate-900/80 flex items-center justify-center backdrop-blur-sm z-10">
+            <div className="flex flex-col items-center">
+              <RefreshCw className="w-10 h-10 text-indigo-500 animate-spin mb-3" />
+              <p className="text-white font-bold text-sm">กำลังสแกนรูปภาพ...</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="w-full max-w-sm p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm font-bold flex items-center gap-2 mb-6 animate-shake">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <span>{error}</span>
         </div>
       )}
-      <video
-        ref={videoRef}
-        className="w-full rounded-xl"
-        playsInline
-        muted
-        autoPlay
+
+      <input 
+        type="file" 
+        accept="image/*" 
+        capture="environment" 
+        ref={fileInputRef} 
+        onChange={onFileChange} 
+        className="hidden" 
       />
-      <canvas ref={canvasRef} className="hidden" />
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-48 h-48 border-4 border-blue-400 rounded-2xl opacity-70" />
-      </div>
+
+      <button
+        onClick={() => fileInputRef.current?.click()}
+        disabled={loading}
+        className="w-full max-w-sm py-4 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+      >
+        <Camera className="w-6 h-6" />
+        {preview ? 'ถ่ายรูปใหม่' : 'ถ่ายรูป / เลือกรูป QR Code'}
+      </button>
+
+      <p className="mt-4 text-xs font-bold text-slate-400 text-center uppercase tracking-widest">
+        แนะนำ: ให้ QR Code อยู่ตรงกลางและชัดเจนที่สุด
+      </p>
     </div>
   );
 };
