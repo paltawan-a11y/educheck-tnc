@@ -4,20 +4,20 @@ import path from "path";
 import { google } from "googleapis";
 import dotenv from "dotenv";
 import fs from "fs";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
-// ========== Simple JSON-based database for classrooms ==========
-// Note: Vercel's filesystem is read-only except for /tmp
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_ANON_KEY || "";
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// ========== Simple JSON-based database (Fallback for logs only) ==========
 const DATA_DIR = process.env.VERCEL ? "/tmp" : path.join(process.cwd(), "data");
-const CLASSROOMS_FILE = path.join(DATA_DIR, "classrooms.json");
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch(e) {}
-  }
-  if (!fs.existsSync(CLASSROOMS_FILE)) {
-    try { fs.writeFileSync(CLASSROOMS_FILE, "[]"); } catch(e) {}
   }
 }
 
@@ -47,25 +47,43 @@ interface Classroom {
   createdAt: string;
 }
 
-function readClassrooms(): Classroom[] {
-  ensureDataDir();
-  try {
-    const data = fs.readFileSync(CLASSROOMS_FILE, "utf-8");
-    const classrooms = JSON.parse(data);
-    // Migration: ensure new fields exist and are strings
-    return classrooms.map((cls: any) => ({
-      ...cls,
-      year: String(cls.year || "1"),
-      room: String(cls.room || "")
-    }));
-  } catch (error) {
+// Supabase Helpers (replacing readClassrooms/writeClassrooms)
+async function getSupabaseClassrooms(): Promise<Classroom[]> {
+  const { data, error } = await supabase.from('classrooms').select('*');
+  if (error) {
+    console.error("Supabase Error (Fetch):", error);
     return [];
   }
+  return data.map((item: any) => ({
+    ...item.data,
+    id: item.id,
+    ownerEmail: item.owner_email
+  }));
 }
 
-function writeClassrooms(classrooms: Classroom[]) {
-  ensureDataDir();
-  fs.writeFileSync(CLASSROOMS_FILE, JSON.stringify(classrooms, null, 2));
+async function getSupabaseClassroomById(id: string): Promise<Classroom | null> {
+  const { data, error } = await supabase.from('classrooms').select('*').eq('id', id).single();
+  if (error || !data) return null;
+  return {
+    ...data.data,
+    id: data.id,
+    ownerEmail: data.owner_email
+  };
+}
+
+async function upsertSupabaseClassroom(classroom: Classroom) {
+  const { id, ownerEmail, ...rest } = classroom;
+  const { error } = await supabase.from('classrooms').upsert({
+    id,
+    owner_email: ownerEmail,
+    data: rest
+  });
+  if (error) console.error("Supabase Error (Upsert):", error);
+}
+
+async function deleteSupabaseClassroom(id: string) {
+  const { error } = await supabase.from('classrooms').delete().eq('id', id);
+  if (error) console.error("Supabase Error (Delete):", error);
 }
 
 // Extract email from Authorization Bearer token
@@ -119,13 +137,14 @@ async function startServer() {
   const PORT_RUN = Number(process.env.PORT || 3000);
 
   // GET search student by ID across ALL classrooms (Move to top to avoid path conflicts)
-  app.get("/api/students/search", (req, res) => {
+  // GET search student by ID across ALL classrooms
+  app.get("/api/students/search", async (req, res) => {
     try {
       const { q } = req.query;
       if (!q) return res.status(400).json({ error: "กรุณาระบุรหัสที่ต้องการค้นหา" });
 
       const query = String(q).trim();
-      const classrooms = readClassrooms();
+      const classrooms = await getSupabaseClassrooms();
       
       for (const classroom of classrooms) {
         if (!classroom.students) continue;
@@ -153,6 +172,7 @@ async function startServer() {
   // =========================================================
 
   // GET all classrooms for logged-in user
+  // GET all classrooms for logged-in user
   app.get("/api/classrooms", async (req, res) => {
     try {
       const email = await getEmailFromToken(req.headers.authorization);
@@ -160,15 +180,22 @@ async function startServer() {
         return res.status(401).json({ error: "ไม่พบการยืนยัน กรุณาเข้าสู่ระบบ" });
       }
       
-      const classrooms = readClassrooms();
-      // Filter classrooms by owner email
-      const userClassrooms = classrooms.filter(c => c.ownerEmail === email);
+      const { data: userClassrooms, error } = await supabase
+        .from('classrooms')
+        .select('*')
+        .eq('owner_email', email);
+        
+      if (error) throw error;
       
-      // Return without student list for listing view
-      const summary = userClassrooms.map(({ students, ...rest }) => ({
-        ...rest,
-        studentCount: students.length,
-      }));
+      const summary = (userClassrooms || []).map((item: any) => {
+        const cls = item.data;
+        return {
+          ...cls,
+          id: item.id,
+          ownerEmail: item.owner_email,
+          studentCount: (cls.students || []).length
+        };
+      });
       res.json(summary);
     } catch (error: any) {
       console.error("Get classrooms error:", error);
@@ -177,22 +204,19 @@ async function startServer() {
   });
 
   // POST generate new session for a classroom
-  app.post("/api/classrooms/:id/session", (req, res) => {
+  // POST generate new session for a classroom
+  app.post("/api/classrooms/:id/session", async (req, res) => {
     try {
-      const classrooms = readClassrooms();
-      const idx = classrooms.findIndex(c => c.id === req.params.id);
+      const classroom = await getSupabaseClassroomById(req.params.id);
       
-      if (idx === -1) {
-        console.warn(`[Session API] Classroom not found: ${req.params.id}`);
+      if (!classroom) {
         return res.status(404).json({ error: "ไม่พบห้องเรียน" });
       }
       
-      // Generate a unique session ID based on timestamp and random string
       const newSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      classrooms[idx].activeSessionId = newSessionId;
-      writeClassrooms(classrooms);
+      classroom.activeSessionId = newSessionId;
+      await upsertSupabaseClassroom(classroom);
       
-      console.log(`[Session API] Created session for classroom ${req.params.id}: ${newSessionId}`);
       res.json({ sessionId: newSessionId, classroomId: req.params.id });
     } catch (error: any) {
       console.error("[Session API] Error:", error);
@@ -200,6 +224,7 @@ async function startServer() {
     }
   });
 
+  // POST create a new classroom
   // POST create a new classroom
   app.post("/api/classrooms", async (req, res) => {
     try {
@@ -214,9 +239,6 @@ async function startServer() {
         return res.status(400).json({ error: "กรุณากรอกข้อมูลให้ครบ (ชื่อ, วิชา, ระดับ, สาขา)" });
       }
       
-      console.log(`[${new Date().toISOString()}] POST CREATE:`, { name, subject, grade, year, room });
-
-      const classrooms = readClassrooms();
       const newClassroom: Classroom = {
         id: `cls_${Date.now()}`,
         ownerEmail: email,
@@ -228,13 +250,13 @@ async function startServer() {
         room: room || "",
         spreadsheetId: spreadsheetId || "",
         students: [],
-        activeSessionId: "", // Start with no active session
+        activeSessionId: "",
         sheetTabName: "",
         attendanceSpreadsheetId: "",
         createdAt: new Date().toISOString(),
       };
-      classrooms.push(newClassroom);
-      writeClassrooms(classrooms);
+      
+      await upsertSupabaseClassroom(newClassroom);
       res.json(newClassroom);
     } catch (error: any) {
       console.error("Create classroom error:", error);
@@ -243,38 +265,30 @@ async function startServer() {
   });
 
   // PATCH update classroom settings
+  // PATCH update classroom settings
   app.patch("/api/classrooms/:id", async (req, res) => {
     try {
       const email = await getEmailFromToken(req.headers.authorization);
       if (!email) return res.status(401).json({ error: "Unauthorized" });
 
-      const classrooms = readClassrooms();
-      const idx = classrooms.findIndex(c => c.id === req.params.id);
-      if (idx === -1) return res.status(404).json({ error: "Not found" });
+      const classroom = await getSupabaseClassroomById(req.params.id);
+      if (!classroom) return res.status(404).json({ error: "Not found" });
 
-      if (classrooms[idx].ownerEmail !== email) {
+      if (classroom.ownerEmail !== email) {
         return res.status(403).json({ error: "Forbbiden" });
       }
 
-      const { attendanceSpreadsheetId, scoringSpreadsheetId, scoringSheetTabName, sheetTabName, name, subject, grade, year, department, room } = req.body;
+      const updates = req.body;
       
-      console.log(`[${new Date().toISOString()}] PATCH Request for ${req.params.id}:`, { name, room });
+      const newClassroom = {
+        ...classroom,
+        ...updates,
+        year: updates.year !== undefined ? String(updates.year) : classroom.year,
+        room: updates.room !== undefined ? String(updates.room) : classroom.room
+      };
 
-      if (attendanceSpreadsheetId !== undefined) classrooms[idx].attendanceSpreadsheetId = attendanceSpreadsheetId;
-      if (scoringSpreadsheetId !== undefined) classrooms[idx].scoringSpreadsheetId = scoringSpreadsheetId;
-      if (scoringSheetTabName !== undefined) classrooms[idx].scoringSheetTabName = scoringSheetTabName;
-      if (sheetTabName !== undefined) classrooms[idx].sheetTabName = sheetTabName;
-      
-      if (name !== undefined) classrooms[idx].name = name;
-      if (subject !== undefined) classrooms[idx].subject = subject;
-      if (grade !== undefined) classrooms[idx].grade = grade;
-      if (year !== undefined) classrooms[idx].year = String(year);
-      if (room !== undefined) classrooms[idx].room = String(room);
-
-      console.log(`[${new Date().toISOString()}] Classroom ${req.params.id} updated room to: "${classrooms[idx].room}"`);
-
-      writeClassrooms(classrooms);
-      res.json(classrooms[idx]);
+      await upsertSupabaseClassroom(newClassroom);
+      res.json(newClassroom);
     } catch (error) {
       res.status(500).json({ error: "Internal Server Error" });
     }
@@ -288,19 +302,14 @@ async function startServer() {
         return res.status(401).json({ error: "ไม่พบการยืนยัน กรุณาเข้าสู่ระบบ" });
       }
       
-      const classrooms = readClassrooms();
-      const classroomToDelete = classrooms.find(c => c.id === req.params.id);
+      const classroom = await getSupabaseClassroomById(req.params.id);
+      if (!classroom) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
       
-      if (!classroomToDelete) {
-        return res.status(404).json({ error: "ไม่พบห้องเรียน" });
-      }
-      
-      if (classroomToDelete.ownerEmail !== email) {
+      if (classroom.ownerEmail !== email) {
         return res.status(403).json({ error: "คุณไม่มีสิทธิ์ลบห้องเรียนนี้" });
       }
       
-      const filtered = classrooms.filter((c) => c.id !== req.params.id);
-      writeClassrooms(filtered);
+      await deleteSupabaseClassroom(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
       console.error("Delete classroom error:", error);
@@ -309,21 +318,15 @@ async function startServer() {
   });
 
   // GET specific classroom with students (public read for students to check-in)
-  app.get("/api/classrooms/:id", (req, res) => {
+  app.get("/api/classrooms/:id", async (req, res) => {
     try {
-      const classrooms = readClassrooms();
-      const classroom = classrooms.find((c) => c.id === req.params.id);
+      const classroom = await getSupabaseClassroomById(req.params.id);
+      if (!classroom) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
       
-      if (!classroom) {
-        return res.status(404).json({ error: "ไม่พบห้องเรียน" });
-      }
-      
-      // Only expose safe classroom metadata, hide sensitive fields for non-owner
       const isOwner = req.headers.authorization ? true : false;
       if (isOwner) {
         res.json(classroom);
       } else {
-        // Return limited public info for students (for QR check-in)
         const { students, ...publicData } = classroom;
         res.json({
           ...publicData,
@@ -337,42 +340,33 @@ async function startServer() {
   });
 
   // POST upload/replace students in a classroom
+  // POST upload/replace students in a classroom
   app.post("/api/classrooms/:id/students", async (req, res) => {
     try {
       const { students } = req.body as { students: Student[] };
       const email = await getEmailFromToken(req.headers.authorization);
       
-      if (!email) {
-        return res.status(401).json({ error: "ไม่พบการยืนยัน กรุณาเข้าสู่ระบบ" });
+      if (!email) return res.status(401).json({ error: "ไม่พบการยืนยัน" });
+      if (!Array.isArray(students)) return res.status(400).json({ error: "รูปแบบไม่ถูกต้อง" });
+      
+      const classroom = await getSupabaseClassroomById(req.params.id);
+      if (!classroom) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
+      
+      if (classroom.ownerEmail !== email) {
+        return res.status(403).json({ error: "No permission" });
       }
       
-      if (!Array.isArray(students)) {
-        return res.status(400).json({ error: "รูปแบบข้อมูลไม่ถูกต้อง" });
-      }
-      
-      const classrooms = readClassrooms();
-      const idx = classrooms.findIndex((c) => c.id === req.params.id);
-      
-      if (idx === -1) {
-        return res.status(404).json({ error: "ไม่พบห้องเรียน" });
-      }
-      
-      if (classrooms[idx].ownerEmail !== email) {
-        return res.status(403).json({ error: "คุณไม่มีสิทธิ์อัพโหลดรายชื่อนักเรียนในห้องนี้" });
-      }
-      
-      classrooms[idx].students = students;
-      writeClassrooms(classrooms);
+      classroom.students = students;
+      await upsertSupabaseClassroom(classroom);
       res.json({ success: true, count: students.length });
     } catch (error: any) {
-      console.error("Upload students error:", error);
-      res.status(500).json({ error: "เกิดข้อผิดพลาด" });
+      res.status(500).json({ error: "Error" });
     }
   });
   // GET lookup student by ID in a classroom (for student check-in)
-  app.get("/api/classrooms/:id/students/:studentId", (req, res) => {
-    const classrooms = readClassrooms();
-    const classroom = classrooms.find((c) => c.id === req.params.id);
+  // GET lookup student by ID in a classroom (for student check-in)
+  app.get("/api/classrooms/:id/students/:studentId", async (req, res) => {
+    const classroom = await getSupabaseClassroomById(req.params.id);
     if (!classroom) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
     const student = classroom.students.find((s) => {
       const searchId = String(req.params.studentId).trim();
@@ -388,21 +382,18 @@ async function startServer() {
     try {
       const email = await getEmailFromToken(req.headers.authorization);
       if (!email) {
-        return res.status(401).json({ error: "ไม่พบการยืนยัน กรุณาเข้าสู่ระบบ" });
+        return res.status(401).json({ error: "ไม่พบการยืนยัน" });
       }
       
-      const classrooms = readClassrooms();
-      const classroomIndex = classrooms.findIndex(c => c.id === req.params.id);
-      if (classroomIndex === -1) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
-      
-      const classroom = classrooms[classroomIndex];
+      const classroom = await getSupabaseClassroomById(req.params.id);
+      if (!classroom) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
       
       if (classroom.ownerEmail !== email) {
-        return res.status(403).json({ error: "คุณไม่มีสิทธิ์ซิงค์รายชื่อในห้องนี้" });
+        return res.status(403).json({ error: "No permission" });
       }
       
       const spreadsheetId = classroom.spreadsheetId || process.env.GOOGLE_SHEET_ID;
-      if (!spreadsheetId) return res.status(400).json({ error: "ห้องเรียนนี้ยังไม่ได้ตั้งค่า Google Sheet ID" });
+      if (!spreadsheetId) return res.status(400).json({ error: "Missing Sheet ID" });
 
       const authClient = new google.auth.GoogleAuth({
         keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json"),
@@ -410,42 +401,30 @@ async function startServer() {
       });
       const sheets = google.sheets({ version: "v4", auth: authClient });
       
-      // Try to read from a sheet that matches the name or just the first sheet
       const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
       const sheetName = classroom.sheetTabName || spreadsheet.data.sheets?.[0].properties?.title || "Sheet1";
 
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `${sheetName}!A:B`, // Reading columns A, B (ID, Name)
+        range: `${sheetName}!A:B`,
       });
 
       const rows = response.data.values || [];
-      if (rows.length < 2) return res.status(400).json({ error: "ไม่พบข้อมูลใน Google Sheet (ต้องการอย่างน้อยหัวตารางและแถวข้อมูล)" });
+      if (rows.length < 2) return res.status(400).json({ error: "No data rows" });
 
-      const header = rows[0];
-      const dataRows = rows.slice(1);
+      const syncedStudents: any[] = rows.slice(1).map(row => ({
+        studentId: String(row[0] || '').trim(),
+        name: String(row[1] || '').trim()
+      })).filter(s => s.studentId && s.name);
 
-      // Map rows to students
-      const syncedStudents: any[] = dataRows.map(row => {
-        // Simple mapping: Col A = ID, Col B = Name
-        const studentId = String(row[0] || '').trim();
-        const name = String(row[1] || '').trim();
-        return {
-          studentId,
-          name
-        };
-      }).filter(s => s.studentId && s.name);
+      if (syncedStudents.length === 0) return res.status(400).json({ error: "No valid students" });
 
-      if (syncedStudents.length === 0) return res.status(400).json({ error: "ไม่สามารถดึงรายชื่อที่ถูกต้องได้ ตรวจสอบรูปแบบตาราง A=รหัส, B=ชื่อ-นามสกุล" });
-
-      // Update and save
-      classrooms[classroomIndex].students = syncedStudents;
-      classrooms[classroomIndex].sheetTabName = sheetName; // Save/Update the tab name
-      writeClassrooms(classrooms);
+      classroom.students = syncedStudents;
+      classroom.sheetTabName = sheetName;
+      await upsertSupabaseClassroom(classroom);
 
       res.json({ success: true, count: syncedStudents.length });
     } catch (error: any) {
-      console.error("Sync Error:", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -459,9 +438,7 @@ async function startServer() {
     try {
       const { studentId, name, grade, room, classroomId, spreadsheetId: reqSheetId, sessionId } = req.body;
 
-      // 0. Validate Session
-      const classrooms = readClassrooms();
-      const classroom = classrooms.find(c => c.id === classroomId);
+      const classroom = await getSupabaseClassroomById(classroomId);
       if (!classroom) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
       
       if (classroom.activeSessionId && classroom.activeSessionId !== sessionId) {
@@ -639,8 +616,7 @@ async function startServer() {
          return res.status(400).json({ error: "ข้อมูลไม่ครบถ้วน (classroomId, studentId, taskName)" });
       }
 
-      const classrooms = readClassrooms();
-      const classroom = classrooms.find(c => c.id === classroomId);
+      const classroom = await getSupabaseClassroomById(classroomId);
       if (!classroom) return res.status(404).json({ error: "ไม่พบห้องเรียน" });
 
       const spreadsheetId = reqSheetId || classroom.scoringSpreadsheetId || classroom.attendanceSpreadsheetId || classroom.spreadsheetId || process.env.GOOGLE_SHEET_ID || "";
@@ -904,7 +880,6 @@ async function startServer() {
       const finalYear = String(year || req.body.year || "1");
 
       // Create classroom from sheet
-      const classrooms = readClassrooms();
       const newClassroom: Classroom = {
         id: `cls_${Date.now()}`,
         ownerEmail: email,
@@ -922,17 +897,7 @@ async function startServer() {
         createdAt: new Date().toISOString(),
       };
       
-      console.log(`[${new Date().toISOString()}] POST CREATE FROM SHEET:`, { 
-        classroomName, 
-        subject, 
-        grade, 
-        room: room || "" 
-      });
-
-      classrooms.push(newClassroom);
-      writeClassrooms(classrooms);
-      
-      console.log(`[${new Date().toISOString()}] Classroom created with room: "${newClassroom.room}"`);
+      await upsertSupabaseClassroom(newClassroom);
       res.json({ success: true, classroom: newClassroom });
     } catch (error: any) {
       console.error("Create Classroom Error:", error);
@@ -1121,25 +1086,24 @@ async function startServer() {
       res.status(500).json({ error: "Failed to fetch dashboard data" });
     }
   });
-
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.resolve(process.cwd(), "dist");
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get("*", (req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
-      });
-    }
-  }
-
   const FINAL_PORT = Number(process.env.PORT || 3000);
   if (!process.env.VERCEL) {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "custom",
+    });
+    app.use(vite.middlewares);
+    app.use("*", async (req, res) => {
+      try {
+        const url = req.originalUrl;
+        const html = fs.readFileSync(path.resolve(process.cwd(), "index.html"), "utf-8");
+        const transformedHtml = await vite.transformIndexHtml(url, html);
+        res.status(200).set({ "Content-Type": "text/html" }).end(transformedHtml);
+      } catch (e: any) {
+        vite.ssrFixStacktrace(e);
+        res.status(500).end(e.message);
+      }
+    });
     app.listen(FINAL_PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${FINAL_PORT}`);
     });
