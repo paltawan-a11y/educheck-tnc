@@ -264,6 +264,7 @@ const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+
   const processImage = async (file: File) => {
     setLoading(true);
     setError(null);
@@ -275,8 +276,8 @@ const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
         
-        // Increase resolution for iPhone 16 Pro and modern cameras
-        const maxDim = 1600; 
+        // Smart Scan resolution
+        const maxDim = 2000; 
         let w = img.width;
         let h = img.height;
         if (w > maxDim || h > maxDim) {
@@ -286,20 +287,47 @@ const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
         
         canvas.width = w;
         canvas.height = h;
+        
+        // Step 1: Draw original image
         ctx.drawImage(img, 0, 0, w, h);
         
-        const imageData = ctx.getImageData(0, 0, w, h);
-        // @ts-ignore
-        const jsQR = (window as any).jsQR;
-        if (jsQR) {
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: 'dontInvert',
+        // Helper to scan
+        const scan = (imageData: ImageData) => {
+          // @ts-ignore
+          const jsQR = (window as any).jsQR;
+          if (!jsQR) return null;
+          return jsQR(imageData.data, imageData.width, imageData.height, {
+             inversionAttempts: 'dontInvert',
           });
-          if (code?.data) {
-            onScan(code.data);
-          } else {
-            setError('ไม่พบ QR Code ในรูปภาพ กรุณาถ่ายให้ชัดเจนขึ้น หลีกเลี่ยงแสงสะท้อน และวาง QR Code ไว้กลางภาพ');
+        };
+
+        // Try 1: Normal scan
+        let imageData = ctx.getImageData(0, 0, w, h);
+        let result = scan(imageData);
+
+        // Try 2: Smarter/Pre-processed scan if failed
+        if (!result) {
+          // Grayscale + Contrast boost
+          const data = imageData.data;
+          for (let i = 0; i < data.length; i += 4) {
+            const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            // Simple contrast boost
+            const threshold = 127;
+            const factor = 1.5;
+            const newVal = threshold + factor * (avg - threshold);
+            const clamped = Math.max(0, Math.min(255, newVal));
+            data[i] = clamped;
+            data[i+1] = clamped;
+            data[i+2] = clamped;
           }
+          ctx.putImageData(imageData, 0, 0);
+          result = scan(imageData);
+        }
+
+        if (result?.data) {
+          onScan(result.data);
+        } else {
+          setError('ไม่พบ QR Code ในรูปภาพ กรุณาลองอีกครั้งโดยสแกนให้เห็นรหัสทั้งแผ่นและชัดเจนขึ้น');
         }
         setLoading(false);
       };
@@ -315,39 +343,40 @@ const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
   };
 
   return (
-    <div className="flex flex-col items-center w-full">
-      <div className="w-full max-w-sm aspect-square bg-[#0f172a] rounded-[2.5rem] overflow-hidden relative flex items-center justify-center border-4 border-indigo-500/20 shadow-2xl mb-6">
+    <div className="flex flex-col items-center w-full px-4">
+      {/* Container: Full Frame look with 4:5 ratio better for phone shots */}
+      <div className="w-full max-w-sm aspect-[4/5] bg-[#020617] rounded-[3rem] overflow-hidden relative flex items-center justify-center border-4 border-indigo-500/30 shadow-[0_25px_50px_-12px_rgba(79,70,229,0.25)] mb-10 group">
         {preview ? (
-          <img src={preview} alt="Preview" className="w-full h-full object-contain bg-slate-800/20" />
+          <img src={preview} alt="Preview" className="w-full h-full object-contain" />
         ) : (
-          <div className="flex flex-col items-center text-slate-500 group">
-             <div className="w-24 h-24 rounded-3xl bg-slate-800/50 flex items-center justify-center mb-6 border border-slate-700/50 group-hover:bg-indigo-600/10 transition-all">
-               <Camera className="w-10 h-10" />
+          <div className="flex flex-col items-center text-slate-400">
+             <div className="w-28 h-28 rounded-[2rem] bg-indigo-500/10 flex items-center justify-center mb-6 border-2 border-indigo-500/20 shadow-inner">
+               <Camera className="w-12 h-12 text-indigo-400" />
              </div>
-             <p className="text-sm font-bold opacity-60">กดปุ่มด้านล่างเพื่อถ่ายรูป</p>
+             <p className="text-base font-black text-indigo-200/50 uppercase tracking-[0.2em]">Ready to Scan</p>
           </div>
         )}
         
         {loading && (
-          <div className="absolute inset-0 bg-slate-900/80 flex items-center justify-center backdrop-blur-md z-10">
-            <div className="flex flex-col items-center">
-              <div className="relative">
-                 <RefreshCw className="w-12 h-12 text-indigo-400 animate-spin mb-4" />
-              </div>
-              <p className="text-white font-black text-sm tracking-widest uppercase">Analyzing...</p>
-            </div>
+          <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center backdrop-blur-xl z-20">
+            <RefreshCw className="w-16 h-16 text-indigo-500 animate-spin mb-6" />
+            <span className="text-white font-black tracking-widest text-xs uppercase animate-pulse">Deep Scanning...</span>
           </div>
         )}
 
-        {/* Framing guidance */}
+        {/* Scan Guidance Overlay */}
         {!preview && !loading && (
-          <div className="absolute inset-8 border-2 border-dashed border-indigo-500/20 rounded-2xl pointer-events-none" />
+          <>
+            <div className="absolute inset-10 border-2 border-indigo-500/40 rounded-3xl opacity-50" />
+            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-indigo-500/20" />
+            <div className="absolute left-1/2 top-0 w-[1px] h-full bg-indigo-500/20" />
+          </>
         )}
       </div>
 
       {error && (
-        <div className="w-full max-w-sm p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm font-bold flex items-center gap-2 mb-6 animate-shake">
-          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+        <div className="w-full max-w-sm p-5 bg-rose-50 border-2 border-rose-100 rounded-3xl text-rose-600 text-sm font-bold flex items-start gap-3 mb-8 shadow-sm">
+          <AlertCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />
           <span>{error}</span>
         </div>
       )}
@@ -361,18 +390,20 @@ const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
         className="hidden" 
       />
 
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        disabled={loading}
-        className="w-full max-w-sm py-4 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50"
-      >
-        <Camera className="w-6 h-6" />
-        {preview ? 'ถ่ายรูปใหม่' : 'ถ่ายรูป / เลือกรูป QR Code'}
-      </button>
-
-      <p className="mt-4 text-xs font-bold text-slate-400 text-center uppercase tracking-widest">
-        แนะนำ: ให้ QR Code อยู่ตรงกลางและชัดเจนที่สุด
-      </p>
+      <div className="w-full max-w-sm space-y-4">
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={loading}
+          className="w-full py-5 bg-gradient-to-br from-indigo-600 via-indigo-700 to-blue-800 text-white rounded-[2rem] font-black text-lg shadow-2xl shadow-indigo-500/40 hover:scale-[1.02] hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-4 disabled:opacity-50"
+        >
+          <Camera className="w-7 h-7" />
+          {preview ? 'ลองถ่ายใหม่อีกครั้ง' : 'เริ่มสแกน QR Code'}
+        </button>
+        
+        <p className="text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] opacity-50">
+          Smart AI Vision v2.0
+        </p>
+      </div>
     </div>
   );
 };
