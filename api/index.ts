@@ -72,17 +72,23 @@ async function getSupabaseClassroomById(id: string): Promise<Classroom | null> {
 
 async function upsertSupabaseClassroom(classroom: Classroom) {
   const { id, ownerEmail, ...rest } = classroom;
-  const { error } = await supabase.from('classrooms').upsert({
+  const { data, error } = await supabase.from('classrooms').upsert({
     id,
     owner_email: ownerEmail,
     data: rest
   });
-  if (error) console.error("Supabase Error (Upsert):", error);
+  if (error) {
+    console.error("Supabase Error (Upsert):", error);
+    throw new Error(`DB Error: ${error.message}`);
+  }
 }
 
 async function deleteSupabaseClassroom(id: string) {
   const { error } = await supabase.from('classrooms').delete().eq('id', id);
-  if (error) console.error("Supabase Error (Delete):", error);
+  if (error) {
+    console.error("Supabase Error (Delete):", error);
+    throw new Error(`DB Error: ${error.message}`);
+  }
 }
 
 // Extract email from Authorization Bearer token
