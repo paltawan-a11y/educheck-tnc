@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import {
@@ -259,25 +258,98 @@ const StudentModal = ({ student, onClose }: { student: StudentStat | null; onClo
 };
 
 const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animRef = useRef<number>(0);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const tick = useCallback(async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+      animRef.current = requestAnimationFrame(tick);
+      return;
+    }
+    canvas.height = video.videoHeight;
+    canvas.width = video.videoWidth;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    // @ts-ignore
+    const jsQR = (window as any).jsQR;
+    if (jsQR) {
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      });
+      if (code?.data) {
+        onScan(code.data);
+        return;
+      }
+    }
+    animRef.current = requestAnimationFrame(tick);
+  }, [onScan]);
+
   useEffect(() => {
-    const scanner = new Html5QrcodeScanner("reader", {
-      fps: 10,
-      qrbox: { width: 250, height: 250 },
-      aspectRatio: 1.0
-    }, false);
-
-    scanner.render((result) => {
-      onScan(result);
-    }, (err) => {
-      // Ignore errors during scan
-    });
-
-    return () => {
-      scanner.clear().catch(e => console.error("Failed to clear scanner", e));
+    let cancelled = false;
+    const start = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.setAttribute('playsinline', 'true');
+          await videoRef.current.play();
+        }
+        setLoading(false);
+        animRef.current = requestAnimationFrame(tick);
+      } catch (e: any) {
+        setError('ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตการใช้กล้องในการตั้งค่า');
+        setLoading(false);
+      }
     };
-  }, []);
+    start();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(animRef.current);
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, [tick]);
 
-  return null;
+  if (error) return (
+    <div className="flex flex-col items-center justify-center p-6 text-center">
+      <div className="text-4xl mb-3">📷</div>
+      <p className="text-red-500 font-medium">{error}</p>
+      <p className="text-gray-500 text-sm mt-2">iOS: เปิด Safari → การตั้งค่า → กล้อง → อนุญาต</p>
+    </div>
+  );
+
+  return (
+    <div className="relative w-full max-w-sm mx-auto">
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded-xl z-10">
+          <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
+        </div>
+      )}
+      <video
+        ref={videoRef}
+        className="w-full rounded-xl"
+        playsInline
+        muted
+        autoPlay
+      />
+      <canvas ref={canvasRef} className="hidden" />
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="w-48 h-48 border-4 border-blue-400 rounded-2xl opacity-70" />
+      </div>
+    </div>
+  );
 };
 
 // --- Main App ---
