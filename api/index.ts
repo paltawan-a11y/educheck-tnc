@@ -7,8 +7,8 @@ import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
-const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_ANON_KEY || "";
+const supabaseUrl = process.env.SUPABASE_URL || "https://placeholder-url.supabase.co";
+const supabaseKey = process.env.SUPABASE_ANON_KEY || "placeholder-key";
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ========== Simple JSON-based database (Fallback for logs only) ==========

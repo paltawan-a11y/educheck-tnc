@@ -28,6 +28,7 @@ interface Props {
 
 export default function IntegratedGoogleSheetsImport({ token, onClassroomCreated }: Props) {
   const [step, setStep] = useState<'form' | 'select-sheet' | 'select-tab' | 'preview' | 'done'>('form');
+  const [showConfirm, setShowConfirm] = useState(false);
   
   // Form fields
   const [classroomDetails, setClassroomDetails] = useState({
@@ -140,11 +141,14 @@ export default function IntegratedGoogleSheetsImport({ token, onClassroomCreated
   const handleCreateClassroom = async () => {
     if (!selectedSheet || !selectedTab || !sheetData) return;
     
-    setLoading(true);
     setError(null);
-    try {
-      if (!confirm(`ยืนยันการสร้างห้องเรียน:\nชื่อ: ${classroomDetails.name}\nวิชา: ${classroomDetails.subject}\nระดับ: ${classroomDetails.grade}${classroomDetails.room}\n\nต้องการดำเนินการต่อหรือไม่?`)) return;
+    setShowConfirm(true);
+  };
 
+  const executeCreateClassroom = async () => {
+    setShowConfirm(false);
+    setLoading(true);
+    try {
       const res = await fetch('/api/classrooms/from-sheet', {
         method: 'POST',
         headers: { 
@@ -152,20 +156,20 @@ export default function IntegratedGoogleSheetsImport({ token, onClassroomCreated
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          spreadsheetId: selectedSheet.id,
-          sheetName: selectedTab.title,
+          spreadsheetId: selectedSheet?.id,
+          sheetName: selectedTab?.title,
           classroomName: classroomDetails.name,
           grade: classroomDetails.grade,
           year: classroomDetails.year,
           department: classroomDetails.department,
           subject: classroomDetails.subject,
-          room: classroomDetails.room,
+          room: classroomDetails.room
         })
       });
-      
+
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || 'Failed to create classroom');
+        const data = await res.json();
+        throw new Error(data.error || 'เกิดข้อผิดพลาดในการสร้างห้องเรียน');
       }
       
       setStep('done');
@@ -388,6 +392,64 @@ export default function IntegratedGoogleSheetsImport({ token, onClassroomCreated
   if (step === 'preview') {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+        <AnimatePresence>
+          {showConfirm && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowConfirm(false)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="relative w-full max-w-sm overflow-hidden rounded-3xl bg-white p-6 shadow-2xl border border-white/20"
+              >
+                <div className="flex flex-col items-center text-center mb-6">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 mb-4">
+                    <CheckCircle2 className="h-8 w-8" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900">ยืนยันข้อมูล</h3>
+                  <p className="text-slate-500 text-sm">กรุณาตรวจสอบความถูกต้องอีกครั้ง</p>
+                </div>
+                
+                <div className="space-y-3 rounded-2xl bg-indigo-50/50 p-4 mb-6 border border-indigo-100">
+                   <div className="flex justify-between items-center text-sm">
+                     <span className="text-indigo-400 font-bold uppercase text-[10px]">ชื่อห้อง</span>
+                     <span className="font-bold text-indigo-900">{classroomDetails.name}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-sm">
+                     <span className="text-indigo-400 font-bold uppercase text-[10px]">วิชา</span>
+                     <span className="font-bold text-indigo-900">{classroomDetails.subject}</span>
+                   </div>
+                   <div className="flex justify-between items-center text-sm">
+                     <span className="text-indigo-400 font-bold uppercase text-[10px]">ระดับ</span>
+                     <span className="font-bold text-indigo-900">{classroomDetails.grade}{classroomDetails.room}</span>
+                   </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={executeCreateClassroom}
+                    className="w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-blue-600 py-4 text-sm font-bold text-white shadow-xl shadow-indigo-200 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  >
+                    ยืนยันการสร้าง
+                  </button>
+                  <button
+                    onClick={() => setShowConfirm(false)}
+                    className="w-full rounded-2xl py-3 text-sm font-bold text-slate-400 transition-all hover:text-slate-600"
+                  >
+                    ย้อนกลับไปแก้ไข
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
         <button
           onClick={() => {
             setStep('select-tab');
