@@ -12,7 +12,8 @@ export default function GoogleLoginButton() {
     if (accessToken) {
       setToken(accessToken);
       localStorage.setItem('google_access_token', accessToken);
-      window.location.href = "/";
+      // Use replaceState to clear the token from URL WITHOUT reloading the page
+      window.history.replaceState({}, '', '/');
     } else {
       const savedToken = localStorage.getItem('google_access_token');
       if (savedToken) setToken(savedToken);
@@ -56,8 +57,8 @@ export default function GoogleLoginButton() {
     setToken(null);
     setProfile(null);
     localStorage.removeItem('google_access_token');
-    window.location.reload();
   };
+
 
   return (
     <div>

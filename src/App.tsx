@@ -500,7 +500,7 @@ export default function App() {
     setSelectedClassroom(null);
     setView('home');
     setStatus(null);
-    window.location.reload();
+    localStorage.removeItem('google_access_token');
   };
 
   const fetchClassrooms = async (accessToken?: string) => {
