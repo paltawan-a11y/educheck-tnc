@@ -275,8 +275,8 @@ const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
         
-        // Optimize canvas size for scanning
-        const maxDim = 800;
+        // Increase resolution for iPhone 16 Pro and modern cameras
+        const maxDim = 1600; 
         let w = img.width;
         let h = img.height;
         if (w > maxDim || h > maxDim) {
@@ -298,7 +298,7 @@ const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
           if (code?.data) {
             onScan(code.data);
           } else {
-            setError('ไม่พบ QR Code ในรูปภาพ กรุณาถ่ายใหม่ให้ชัดเจนขึ้น');
+            setError('ไม่พบ QR Code ในรูปภาพ กรุณาถ่ายให้ชัดเจนขึ้น หลีกเลี่ยงแสงสะท้อน และวาง QR Code ไว้กลางภาพ');
           }
         }
         setLoading(false);
@@ -315,26 +315,33 @@ const Scanner = ({ onScan }: { onScan: (data: string) => void }) => {
   };
 
   return (
-    <div className="flex flex-col items-center">
-      <div className="w-full max-w-sm aspect-square bg-slate-900 rounded-3xl overflow-hidden relative flex items-center justify-center border-4 border-indigo-500/30 shadow-2xl mb-6">
+    <div className="flex flex-col items-center w-full">
+      <div className="w-full max-w-sm aspect-square bg-[#0f172a] rounded-[2.5rem] overflow-hidden relative flex items-center justify-center border-4 border-indigo-500/20 shadow-2xl mb-6">
         {preview ? (
-          <img src={preview} alt="Preview" className="w-full h-full object-cover" />
+          <img src={preview} alt="Preview" className="w-full h-full object-contain bg-slate-800/20" />
         ) : (
-          <div className="flex flex-col items-center text-slate-400 group">
-             <div className="w-20 h-20 rounded-full bg-slate-800 flex items-center justify-center mb-4 group-hover:bg-indigo-600/20 transition-colors">
+          <div className="flex flex-col items-center text-slate-500 group">
+             <div className="w-24 h-24 rounded-3xl bg-slate-800/50 flex items-center justify-center mb-6 border border-slate-700/50 group-hover:bg-indigo-600/10 transition-all">
                <Camera className="w-10 h-10" />
              </div>
-             <p className="text-sm font-bold opacity-60">กดปุ่มด้านล่างเพื่อถ่ายรูป QR Code</p>
+             <p className="text-sm font-bold opacity-60">กดปุ่มด้านล่างเพื่อถ่ายรูป</p>
           </div>
         )}
         
         {loading && (
-          <div className="absolute inset-0 bg-slate-900/80 flex items-center justify-center backdrop-blur-sm z-10">
+          <div className="absolute inset-0 bg-slate-900/80 flex items-center justify-center backdrop-blur-md z-10">
             <div className="flex flex-col items-center">
-              <RefreshCw className="w-10 h-10 text-indigo-500 animate-spin mb-3" />
-              <p className="text-white font-bold text-sm">กำลังสแกนรูปภาพ...</p>
+              <div className="relative">
+                 <RefreshCw className="w-12 h-12 text-indigo-400 animate-spin mb-4" />
+              </div>
+              <p className="text-white font-black text-sm tracking-widest uppercase">Analyzing...</p>
             </div>
           </div>
+        )}
+
+        {/* Framing guidance */}
+        {!preview && !loading && (
+          <div className="absolute inset-8 border-2 border-dashed border-indigo-500/20 rounded-2xl pointer-events-none" />
         )}
       </div>
 
