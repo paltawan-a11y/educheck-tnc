@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import { google } from "googleapis";
 import dotenv from "dotenv";
@@ -1121,23 +1120,6 @@ async function startServer() {
       res.status(500).json({ error: "Failed to fetch dashboard data" });
     }
   });
-
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.resolve(process.cwd(), "dist");
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get("*", (req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
-      });
-    }
-  }
-
   const FINAL_PORT = Number(process.env.PORT || 3000);
   if (!process.env.VERCEL) {
     app.listen(FINAL_PORT, "0.0.0.0", () => {
