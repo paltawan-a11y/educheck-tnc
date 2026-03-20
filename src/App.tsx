@@ -423,23 +423,28 @@ export default function App() {
     const sessionId = params.get('sessionId');
     const newToken = params.get('token');
 
-    // Clear URL params immediately to prevent re-triggering
+    if (newToken) {
+      // Save token to localStorage and clear the URL without causing a reload
+      localStorage.setItem('google_access_token', newToken);
+      setToken(newToken);
+      window.history.replaceState({}, '', '/');
+      fetchUserInfo(newToken);
+      fetchClassrooms(newToken);
+      return;
+    }
+
+    const savedToken = localStorage.getItem('google_access_token');
+    if (savedToken) {
+      setToken(savedToken);
+      fetchUserInfo(savedToken);
+      fetchClassrooms(savedToken);
+    }
+
     if (classroomId) {
       window.history.replaceState({}, '', '/');
     }
 
-    if (newToken) {
-      localStorage.setItem('google_access_token', newToken);
-      window.location.href = '/';
-      return;
-    } else if (token) {
-      // Token exists from localStorage, fetch user info and classrooms
-      fetchUserInfo(token);
-      fetchClassrooms(token);
-    }
-
     if (classroomId && sessionId) {
-      // Only load for student check-in if BOTH classroomId AND sessionId are present
       loadClassroomForCheckin(classroomId, sessionId);
     }
 
@@ -447,11 +452,9 @@ export default function App() {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'google_access_token') {
         if (e.newValue === null) {
-          // Token was removed (logout)
           setToken(null);
           handleLogout();
         } else {
-          // Token was added or changed (login)
           setToken(e.newValue);
         }
       }
@@ -459,7 +462,7 @@ export default function App() {
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, [token]);
+  }, []); // Run once on mount only
 
   // Fetch classrooms whenever token changes
   useEffect(() => {
