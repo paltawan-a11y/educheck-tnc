@@ -4,21 +4,23 @@ import path from "path";
 import { google } from "googleapis";
 import dotenv from "dotenv";
 import fs from "fs";
-import { fileURLToPath } from "url";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 // ========== Simple JSON-based database for classrooms ==========
-const DATA_DIR = path.join(__dirname, "data");
+// Note: Vercel's filesystem is read-only except for /tmp
+const DATA_DIR = process.env.VERCEL ? "/tmp" : path.join(process.cwd(), "data");
 const CLASSROOMS_FILE = path.join(DATA_DIR, "classrooms.json");
 
 function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(CLASSROOMS_FILE)) fs.writeFileSync(CLASSROOMS_FILE, "[]");
+  if (!fs.existsSync(DATA_DIR)) {
+    try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch(e) {}
+  }
+  if (!fs.existsSync(CLASSROOMS_FILE)) {
+    try { fs.writeFileSync(CLASSROOMS_FILE, "[]"); } catch(e) {}
+  }
 }
+
 
 interface Student {
   studentId: string;
@@ -403,7 +405,7 @@ async function startServer() {
       if (!spreadsheetId) return res.status(400).json({ error: "ห้องเรียนนี้ยังไม่ได้ตั้งค่า Google Sheet ID" });
 
       const authClient = new google.auth.GoogleAuth({
-        keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, "service-account.json.json"),
+        keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json"),
         scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
       });
       const sheets = google.sheets({ version: "v4", auth: authClient });
@@ -475,7 +477,7 @@ async function startServer() {
       let authClient: any;
       try {
         authClient = new google.auth.GoogleAuth({
-          keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, "service-account.json.json"),
+          keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json"),
           scopes: ["https://www.googleapis.com/auth/spreadsheets"],
         });
       } catch {
@@ -647,7 +649,7 @@ async function startServer() {
       }
 
       const authClient = new google.auth.GoogleAuth({
-        keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, "service-account.json.json"),
+        keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(process.cwd(), "service-account.json.json"),
         scopes: ["https://www.googleapis.com/auth/spreadsheets"],
       });
 
@@ -1127,7 +1129,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, "dist");
+    const distPath = path.resolve(process.cwd(), "dist");
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
       app.get("*", (req, res) => {
